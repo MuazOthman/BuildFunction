@@ -34,9 +34,26 @@ Function Build-Function{
 
     Write-Host "Fixing YAML"
 
+    # TODO: should adjust parsing behavior to skip parsing dates #1
     $yml = (Get-Content -Path temp\template.yaml | ConvertFrom-Yaml)
-    $yml.Resources.Values | Where-Object {$_.Type -eq "AWS::Serverless::Function"} | ForEach-Object {If ($_.Properties.CodeUri.StartsWith("..\")) {$_.Properties.CodeUri = $_.Properties.CodeUri.Substring(3)}}
-    ConvertTo-Yaml $yml > temp\output.yaml
+
+    # CodeUri must match function logical name according to SAM build, see #2
+    $yml.Resources.GetEnumerator() | Where-Object {$_.Value.Type -eq "AWS::Serverless::Function"} | ForEach-Object {$_.Value.Properties.CodeUri = $_.Key}
+    
+    # custom code to serialize YAML without breaking date-like strings for versions, a temporary solution for #1
+    $sb = New-Object -TypeName YamlDotNet.Serialization.SerializerBuilder
+    [array]$foo = $null
+    $sb = $sb.WithTypeConverter((New-Object -TypeName YamlDotNet.Serialization.Converters.DateTimeConverter -ArgumentList Utc, $foo, @("yyyy-MM-dd")))
+    $ser = $sb.Build()
+    $ymlString = $ser.Serialize($yml)
+
+    # Updated YAML saving to encode in UTF8, see #3
+    If(!(Test-Path ".\temp"))
+    {
+        New-Item -ItemType Directory -Force -Path ".\temp"
+    }
+    $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding $False
+    [System.IO.File]::WriteAllText((Join-Path -Path (Get-Location) -ChildPath "temp\output.yaml"), $ymlString, $Utf8NoBomEncoding)
 
     If(Test-Path .aws-sam\build\$FunctionName){
         Remove-Item .aws-sam\build\$FunctionName -Force -Recurse
